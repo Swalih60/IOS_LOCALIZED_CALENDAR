@@ -1,5 +1,22 @@
 import SwiftUI
 
+// MARK: - Language Models
+struct LanguageData: Codable {
+    var months: MonthNames
+    var days: DayNames
+    
+    struct MonthNames: Codable {
+        var full: [String]
+        var short: [String]
+    }
+    
+    struct DayNames: Codable {
+        var full: [String]
+        var short: [String]
+        var min: [String]
+    }
+}
+
 // MARK: - Models
 struct DateSelection {
     var selectedDates: [Date] = []
@@ -16,48 +33,72 @@ struct DateSelection {
 struct CalendarView: View {
     // MARK: - Properties
     private let calendar = Calendar.current
-    private let dateFormatter: DateFormatter = {
+    
+    // MARK: - Language Properties
+    @State private var languages: [String: LanguageData] = [:]
+    @State private var selectedLanguage: String = "English"
+    @State private var showLanguagePicker = false
+    
+    // Custom formatters that will use the selected language
+    private var dateFormatter: DateFormatter {
         let formatter = DateFormatter()
         formatter.dateFormat = "d"
         return formatter
-    }()
-    private let weekdayFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "E"
-        return formatter
-    }()
-    private let monthYearFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM yyyy"
-        return formatter
-    }()
+    }
     
     // MARK: - State
     @State private var dateSelection = DateSelection()
     @State private var currentMonth = Date()
     @State private var showingMonths = 12
     
-    //turn this to false to remove time selection
+    // Time selection
     @State private var timeSelection: Bool = true
     @State private var departureTime = Date()
     @State private var showDepartureTimePicker: Bool = false
     @State private var returnTime = Date()
     @State private var showReturnTimePicker: Bool = false
     
-    //turn this to false for single Date
-    @State private var singleDate:Bool = true
+    // Single or range selection
+    @State private var singleDate: Bool = true
     
     // MARK: - Computed Properties
     private var selectedDates: [Date] {
         dateSelection.selectedDates
     }
     
+    private var availableLanguages: [String] {
+        Array(languages.keys).sorted()
+    }
+    
+    private var weekdayNames: [String] {
+        // Get the short day names for the selected language
+        // Default to English-like weekday abbreviations if language data isn't loaded
+        guard let languageData = languages[selectedLanguage] else {
+            return ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
+        }
+        
+        // Reorder days to start with Monday (as in the original UI)
+        var shortDays = languageData.days.short
+        // Most languages in the JSON start with Sunday, so we need to reorder
+        // if the array has 7 days and starts with Sunday
+        if shortDays.count == 7 {
+            let sunday = shortDays.removeFirst()
+            shortDays.append(sunday)
+        }
+        return shortDays
+    }
+    
+    // MARK: - Initialization
+    init() {
+        // We'll load language data when the view appears
+    }
+    
     // MARK: - Body
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
-                // Header with back button
-//                headerView
+                // Header with language selection button
+                headerView
                 
                 // Sticky weekday header
                 weekdayHeaderView
@@ -79,34 +120,45 @@ struct CalendarView: View {
                 )
             )
             .navigationBarHidden(true)
+            .onAppear {
+                loadLanguageData()
+            }
+            .sheet(isPresented: $showLanguagePicker) {
+                languagePickerView
+            }
         }
     }
     
     // MARK: - View Components
-//    private var headerView: some View {
-//        HStack {
-//            Button(action: {
-//                // Go back action
-//            }) {
-//                Image(systemName: "chevron.left")
-//                    .foregroundColor(.blue)
-//                    .font(.title2)
-//            }
-//            .padding()
-//
-//            Text("Select Date")
-//                .font(.title3)
-//                .fontWeight(.bold)
-//                .foregroundColor(Color("calendarColor"))
-//
-//            Spacer()
-//        }
-//        .padding(.bottom, 20)
-//    }
+    private var headerView: some View {
+        HStack {
+            
+            
+            Spacer()
+            
+            // Language selection button
+            Button(action: {
+                showLanguagePicker = true
+            }) {
+                HStack {
+                    Text(selectedLanguage)
+                        .font(.subheadline)
+                    
+                    Image(systemName: "globe")
+                        .font(.subheadline)
+                }
+                .padding(8)
+                .background(Color(UIColor.systemGray6))
+                .cornerRadius(8)
+            }
+            .padding(.trailing)
+        }
+        .padding(.vertical, 20)
+    }
     
     private var weekdayHeaderView: some View {
         HStack(spacing: 0) {
-            ForEach(["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"], id: \.self) { day in
+            ForEach(weekdayNames, id: \.self) { day in
                 Text(day)
                     .font(.caption)
                     .fontWeight(.regular)
@@ -128,8 +180,8 @@ struct CalendarView: View {
                             month: date,
                             dateSelection: $dateSelection,
                             calendar: calendar,
-                            singleDateMode: !singleDate
-                            
+                            singleDateMode: !singleDate,
+                            languageData: languages[selectedLanguage]
                         )
                     }
                 }
@@ -150,14 +202,15 @@ struct CalendarView: View {
                     label: "Departure"
                 )
                 
-                if singleDate{  DateAndTime(
-                    showTimePicker: $showReturnTimePicker,
-                    selectedTime: $returnTime,
-                    timeSelection: $timeSelection,
-                    selectedDates: dateSelection.selectedDates,
-                    isFirst: false,
-                    label: "Return"
-                )
+                if singleDate {
+                    DateAndTime(
+                        showTimePicker: $showReturnTimePicker,
+                        selectedTime: $returnTime,
+                        timeSelection: $timeSelection,
+                        selectedDates: dateSelection.selectedDates,
+                        isFirst: false,
+                        label: "Return"
+                    )
                 }
             }
             .padding()
@@ -172,7 +225,65 @@ struct CalendarView: View {
         }
         .background(Color.white)
     }
-}
+    
+    private var languagePickerView: some View {
+        NavigationView {
+            List {
+                ForEach(availableLanguages, id: \.self) { language in
+                    Button(action: {
+                        selectedLanguage = language
+                        showLanguagePicker = false
+                    }) {
+                        HStack {
+                            Text(language)
+                            
+                            Spacer()
+                            
+                            if language == selectedLanguage {
+                                Image(systemName: "checkmark")
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                    }
+                    .foregroundColor(.primary)
+                }
+            }
+            .navigationTitle("Select Language")
+            .navigationBarItems(trailing: Button("Cancel") {
+                showLanguagePicker = false
+            })
+        }
+        .presentationDetents([.medium, .large])
+    }
+    
+    // MARK: - Methods
+    // Load language data from the calendar_localizations file
+    private func loadLanguageData() {
+        // For this implementation, we'll load the JSON directly from the bundle
+        guard let fileURL = Bundle.main.url(forResource: "calendar_localizations", withExtension: "json"),
+              let jsonData = try? Data(contentsOf: fileURL) else {
+            print("Failed to load language data file")
+            return
+        }
+        
+        do {
+            let decoder = JSONDecoder()
+            languages = try decoder.decode([String: LanguageData].self, from: jsonData)
+            
+            // Set default language - use English if available, otherwise first in list
+            if languages.keys.contains("English") {
+                selectedLanguage = "English"
+            } else {
+                selectedLanguage = languages.keys.sorted().first ?? selectedLanguage
+            }
+        } catch {
+            print("Error decoding language data: \(error)")
+        }
+    }
+    
+    
+    }
+
 
 // MARK: - MonthView
 struct MonthView: View {
@@ -180,23 +291,36 @@ struct MonthView: View {
     @Binding var dateSelection: DateSelection
     let calendar: Calendar
     let singleDateMode: Bool
+    let languageData: LanguageData?
     
     // Cache computed values
     private let monthStart: Date
-    private let monthOnly: String
-    private let yearOnly: String
     private let daysInMonth: Int
     private let adjustedFirstWeekday: Int
     
-    init(month: Date, dateSelection: Binding<DateSelection>, calendar: Calendar, singleDateMode: Bool = false) {
+    private var monthOnly: String {
+        if let languageData = languageData {
+            let monthIndex = calendar.component(.month, from: month) - 1
+            if monthIndex >= 0 && monthIndex < languageData.months.short.count {
+                return languageData.months.short[monthIndex]
+            }
+        }
+        // Fallback to default formatting
+        return month.formatted(.dateTime.month(.wide))
+    }
+    
+    private var yearOnly: String {
+        return month.formatted(.dateTime.year())
+    }
+    
+    init(month: Date, dateSelection: Binding<DateSelection>, calendar: Calendar, singleDateMode: Bool = false, languageData: LanguageData? = nil) {
         self.month = month
         self._dateSelection = dateSelection
         self.calendar = calendar
+        self.languageData = languageData
         
         // Pre-compute values
         self.monthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: month))!
-        self.monthOnly = month.formatted(.dateTime.month(.wide))
-        self.yearOnly = month.formatted(.dateTime.year())
         self.daysInMonth = calendar.range(of: .day, in: .month, for: monthStart)?.count ?? 30
         let firstWeekday = calendar.component(.weekday, from: monthStart)
         self.adjustedFirstWeekday = (firstWeekday + 5) % 7 // Adjusting to make Monday = 0, Sunday = 6
@@ -255,10 +379,10 @@ struct MonthView: View {
     
     private func handleDateSelection(_ date: Date) {
         if singleDateMode {
-                // Single date mode - always just select one date
-                dateSelection.selectedDates = [date]
-                dateSelection.selectionState = .firstDateSelected
-            }
+            // Single date mode - always just select one date
+            dateSelection.selectedDates = [date]
+            dateSelection.selectionState = .firstDateSelected
+        }
         else{
             switch dateSelection.selectionState {
             case .none:
@@ -396,7 +520,7 @@ func formattedTime(_ date: Date) -> String {
     return formatter.string(from: date)
 }
 
-// MARK: - DateAndTime it is a component used in the footer which has the date and time
+// MARK: - DateAndTime
 struct DateAndTime: View {
     @Binding var showTimePicker: Bool
     @Binding var selectedTime: Date
@@ -437,7 +561,7 @@ struct DateAndTime: View {
     }
 }
 
-// MARK: - TimePickerView component used in date and time
+// MARK: - TimePickerView
 struct TimePickerView: View {
     @Binding var selectedTime: Date
     @Binding var showTimePicker: Bool
