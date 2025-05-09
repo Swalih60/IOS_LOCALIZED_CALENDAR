@@ -76,11 +76,9 @@ struct CalendarView: View {
         guard let languageData = languages[selectedLanguage] else {
             return ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
         }
-        
-        // Reorder days to start with Monday (as in the original UI)
+
         var shortDays = languageData.days.short
-        // Most languages in the JSON start with Sunday, so we need to reorder
-        // if the array has 7 days and starts with Sunday
+
         if shortDays.count == 7 {
             let sunday = shortDays.removeFirst()
             shortDays.append(sunday)
@@ -90,7 +88,7 @@ struct CalendarView: View {
     
     // MARK: - Initialization
     init() {
-        // We'll load language data when the view appears
+        
     }
     
     // MARK: - Body
@@ -259,7 +257,7 @@ struct CalendarView: View {
     // MARK: - Methods
     // Load language data from the calendar_localizations file
     private func loadLanguageData() {
-        // For this implementation, we'll load the JSON directly from the bundle
+       
         guard let fileURL = Bundle.main.url(forResource: "calendar_localizations", withExtension: "json"),
               let jsonData = try? Data(contentsOf: fileURL) else {
             print("Failed to load language data file")
