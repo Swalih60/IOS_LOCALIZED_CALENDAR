@@ -86,11 +86,6 @@ struct CalendarView: View {
         return shortDays
     }
     
-    // MARK: - Initialization
-    init() {
-        
-    }
-    
     // MARK: - Body
     var body: some View {
         NavigationView {
@@ -100,6 +95,8 @@ struct CalendarView: View {
                 
                 // Sticky weekday header
                 weekdayHeaderView
+                    .background(Color.white)
+                    .zIndex(1)
                 
                 // Calendar main part
                 calendarScrollView
@@ -130,8 +127,6 @@ struct CalendarView: View {
     // MARK: - View Components
     private var headerView: some View {
         HStack {
-            
-            
             Spacer()
             
             // Language selection button
@@ -164,23 +159,34 @@ struct CalendarView: View {
                     .foregroundColor(Color("calendarColor"))
             }
         }
-        .padding(.bottom, 30)
+        .padding(.vertical, 15)
         .background(Color.white)
-        .zIndex(1)
     }
     
     private var calendarScrollView: some View {
         ScrollView {
-            LazyVStack(spacing: 20) {
+            LazyVStack(spacing: 20, pinnedViews: [.sectionHeaders]) {
                 ForEach(0..<showingMonths, id: \.self) { monthOffset in
                     if let date = calendar.date(byAdding: .month, value: monthOffset, to: currentMonth) {
-                        MonthView(
-                            month: date,
-                            dateSelection: $dateSelection,
-                            calendar: calendar,
-                            singleDateMode: !singleDate,
-                            languageData: languages[selectedLanguage]
-                        )
+                        Section(header:
+                            MonthHeaderView(
+                                month: date,
+                                calendar: calendar,
+                                languageData: languages[selectedLanguage]
+                            )
+                          
+                        ) {
+                            
+                                MonthView(
+                                    month: date,
+                                    dateSelection: $dateSelection,
+                                    calendar: calendar,
+                                    singleDateMode: !singleDate,
+                                    languageData: languages[selectedLanguage],
+                                    showHeader: false
+                                )
+                            
+                        }
                     }
                 }
             }
@@ -257,7 +263,6 @@ struct CalendarView: View {
     // MARK: - Methods
     // Load language data from the calendar_localizations file
     private func loadLanguageData() {
-       
         guard let fileURL = Bundle.main.url(forResource: "calendar_localizations", withExtension: "json"),
               let jsonData = try? Data(contentsOf: fileURL) else {
             print("Failed to load language data file")
@@ -278,10 +283,103 @@ struct CalendarView: View {
             print("Error decoding language data: \(error)")
         }
     }
-    
-    
-    }
+}
 
+// MARK: - Visibility Check Modifier
+struct VisibilityDetector: ViewModifier {
+    let onVisible: (Bool) -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(
+                GeometryReader { geometry in
+                    Color.clear
+                        .preference(key: VisibilityPreferenceKey.self, value: geometry.frame(in: .named("calendarScroll")))
+                }
+            )
+            .onPreferenceChange(VisibilityPreferenceKey.self) { frame in
+                let isVisible = frame.minY < 100 && frame.maxY > 0
+                onVisible(isVisible)
+            }
+    }
+}
+
+struct VisibilityPreferenceKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
+    }
+}
+
+extension View {
+    func checkVisibility(onVisible: @escaping (Bool) -> Void) -> some View {
+        modifier(VisibilityDetector(onVisible: onVisible))
+    }
+}
+
+// MARK: - MonthHeaderView (Sticky Section Header)
+struct MonthHeaderView: View {
+    let month: Date
+    let calendar: Calendar
+    let languageData: LanguageData?
+    
+    private var monthOnly: String {
+        if let languageData = languageData {
+            let monthIndex = calendar.component(.month, from: month) - 1
+            if monthIndex >= 0 && monthIndex < languageData.months.short.count {
+                return languageData.months.short[monthIndex]
+            }
+        }
+        return month.formatted(.dateTime.month(.wide))
+    }
+    
+    private var yearOnly: String {
+        return month.formatted(.dateTime.year())
+    }
+    
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Spacer()
+            Text(monthOnly)
+                .font(.title2)
+                .fontWeight(.bold)
+                .foregroundColor(Color("calendarColor"))
+            Text(yearOnly)
+                .font(.caption)
+                .foregroundColor(Color("calendarColor"))
+                .fontWeight(.bold)
+            
+          
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+    }
+}
+
+// MARK: - MonthSectionView (Combined Month and Grid)
+struct MonthSectionView: View {
+    let month: Date
+    @Binding var dateSelection: DateSelection
+    let calendar: Calendar
+    let singleDateMode: Bool
+    let languageData: LanguageData?
+    let onVisible: (Bool) -> Void
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Month dates grid without the header
+            MonthView(
+                month: month,
+                dateSelection: $dateSelection,
+                calendar: calendar,
+                singleDateMode: singleDateMode,
+                languageData: languageData,
+                showHeader: false
+            )
+        }
+        .checkVisibility(onVisible: onVisible)
+    }
+}
 
 // MARK: - MonthView
 struct MonthView: View {
@@ -290,6 +388,7 @@ struct MonthView: View {
     let calendar: Calendar
     let singleDateMode: Bool
     let languageData: LanguageData?
+    let showHeader: Bool
     
     // Cache computed values
     private let monthStart: Date
@@ -311,11 +410,12 @@ struct MonthView: View {
         return month.formatted(.dateTime.year())
     }
     
-    init(month: Date, dateSelection: Binding<DateSelection>, calendar: Calendar, singleDateMode: Bool = false, languageData: LanguageData? = nil) {
+    init(month: Date, dateSelection: Binding<DateSelection>, calendar: Calendar, singleDateMode: Bool = false, languageData: LanguageData? = nil, showHeader: Bool = true) {
         self.month = month
         self._dateSelection = dateSelection
         self.calendar = calendar
         self.languageData = languageData
+        self.showHeader = showHeader
         
         // Pre-compute values
         self.monthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: month))!
@@ -326,18 +426,23 @@ struct MonthView: View {
     }
     
     var body: some View {
-        VStack(alignment: .trailing, spacing: 20) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(monthOnly)
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(Color("calendarColor"))
-                Text(yearOnly)
-                    .font(.caption)
-                    .foregroundColor(Color("calendarColor"))
-                    .fontWeight(.bold)
-            }
-            .padding(.horizontal)
+        VStack(alignment: .leading, spacing: 20) {
+            
+          
+                if showHeader {
+                    
+                        Text(monthOnly)
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .foregroundColor(Color("calendarColor"))
+                        Text(yearOnly)
+                            .font(.caption)
+                            .foregroundColor(Color("calendarColor"))
+                            .fontWeight(.bold)
+                    
+                    
+                }
+            
             
             // Days grid
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7), spacing: 0) {
