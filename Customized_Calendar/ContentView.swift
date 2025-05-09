@@ -29,6 +29,75 @@ struct DateSelection {
     }
 }
 
+// MARK: - Calendar Date Utilities
+// Extracted reusable date formatting logic
+struct CalendarFormatting {
+    private static let dateCache = NSCache<NSString, NSString>()
+    private static let timeCache = NSCache<NSString, NSString>()
+    
+    static let monthFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMMM"
+        return formatter
+    }()
+    
+    static let yearFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy"
+        return formatter
+    }()
+    
+    static let fullDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, yyyy"
+        return formatter
+    }()
+    
+    static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm a"
+        return formatter
+    }()
+    
+    static func monthString(for date: Date, languageData: LanguageData?, calendar: Calendar) -> String {
+        if let languageData = languageData {
+            let monthIndex = calendar.component(.month, from: date) - 1
+            if monthIndex >= 0 && monthIndex < languageData.months.short.count {
+                return languageData.months.short[monthIndex]
+            }
+        }
+        return monthFormatter.string(from: date)
+    }
+    
+    static func yearString(for date: Date) -> String {
+        return yearFormatter.string(from: date)
+    }
+    
+    static func formattedDate(_ date: Date?) -> String {
+        guard let date = date else { return "MMM DD, YYYY" }
+        
+        let cacheKey = "\(date.timeIntervalSince1970)" as NSString
+        if let cachedResult = dateCache.object(forKey: cacheKey) {
+            return cachedResult as String
+        }
+        
+        let result = fullDateFormatter.string(from: date)
+        dateCache.setObject(result as NSString, forKey: cacheKey)
+        return result
+    }
+    
+    static func formattedTime(_ date: Date) -> String {
+        let cacheKey = "\(date.timeIntervalSince1970)" as NSString
+        if let cachedResult = timeCache.object(forKey: cacheKey) {
+            return cachedResult as String
+        }
+        
+        let result = timeFormatter.string(from: date)
+        timeCache.setObject(result as NSString, forKey: cacheKey)
+        return result
+    }
+}
+
 // MARK: - CalendarView
 struct CalendarView: View {
     // MARK: - Properties
@@ -38,13 +107,6 @@ struct CalendarView: View {
     @State private var languages: [String: LanguageData] = [:]
     @State private var selectedLanguage: String = "English"
     @State private var showLanguagePicker = false
-    
-    // Custom formatters that will use the selected language
-    private var dateFormatter: DateFormatter {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "d"
-        return formatter
-    }
     
     // MARK: - State
     @State private var dateSelection = DateSelection()
@@ -151,8 +213,8 @@ struct CalendarView: View {
     
     private var weekdayHeaderView: some View {
         HStack(spacing: 0) {
-            ForEach(weekdayNames, id: \.self) { day in
-                Text(day)
+            ForEach(weekdayNames.indices, id: \.self) { index in
+                Text(weekdayNames[index])
                     .font(.caption)
                     .fontWeight(.regular)
                     .frame(maxWidth: .infinity)
@@ -174,18 +236,16 @@ struct CalendarView: View {
                                 calendar: calendar,
                                 languageData: languages[selectedLanguage]
                             )
-                          
                         ) {
-                            
-                                MonthView(
-                                    month: date,
-                                    dateSelection: $dateSelection,
-                                    calendar: calendar,
-                                    singleDateMode: !singleDate,
-                                    languageData: languages[selectedLanguage],
-                                    showHeader: false
-                                )
-                            
+                            MonthView(
+                                month: date,
+                                dateSelection: $dateSelection,
+                                calendar: calendar,
+                                singleDateMode: !singleDate,
+                                languageData: languages[selectedLanguage],
+                                showHeader: false
+                            )
+                            .id("month-\(monthOffset)")
                         }
                     }
                 }
@@ -324,17 +384,11 @@ struct MonthHeaderView: View {
     let languageData: LanguageData?
     
     private var monthOnly: String {
-        if let languageData = languageData {
-            let monthIndex = calendar.component(.month, from: month) - 1
-            if monthIndex >= 0 && monthIndex < languageData.months.short.count {
-                return languageData.months.short[monthIndex]
-            }
-        }
-        return month.formatted(.dateTime.month(.wide))
+        CalendarFormatting.monthString(for: month, languageData: languageData, calendar: calendar)
     }
     
     private var yearOnly: String {
-        return month.formatted(.dateTime.year())
+        CalendarFormatting.yearString(for: month)
     }
     
     var body: some View {
@@ -348,8 +402,6 @@ struct MonthHeaderView: View {
                 .font(.caption)
                 .foregroundColor(Color("calendarColor"))
                 .fontWeight(.bold)
-            
-          
         }
         .padding(.horizontal)
         .padding(.vertical, 10)
@@ -394,20 +446,14 @@ struct MonthView: View {
     private let monthStart: Date
     private let daysInMonth: Int
     private let adjustedFirstWeekday: Int
+    private let today: Date
     
     private var monthOnly: String {
-        if let languageData = languageData {
-            let monthIndex = calendar.component(.month, from: month) - 1
-            if monthIndex >= 0 && monthIndex < languageData.months.short.count {
-                return languageData.months.short[monthIndex]
-            }
-        }
-        // Fallback to default formatting
-        return month.formatted(.dateTime.month(.wide))
+        CalendarFormatting.monthString(for: month, languageData: languageData, calendar: calendar)
     }
     
     private var yearOnly: String {
-        return month.formatted(.dateTime.year())
+        CalendarFormatting.yearString(for: month)
     }
     
     init(month: Date, dateSelection: Binding<DateSelection>, calendar: Calendar, singleDateMode: Bool = false, languageData: LanguageData? = nil, showHeader: Bool = true) {
@@ -416,33 +462,32 @@ struct MonthView: View {
         self.calendar = calendar
         self.languageData = languageData
         self.showHeader = showHeader
+        self.singleDateMode = singleDateMode
         
         // Pre-compute values
         self.monthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: month))!
         self.daysInMonth = calendar.range(of: .day, in: .month, for: monthStart)?.count ?? 30
         let firstWeekday = calendar.component(.weekday, from: monthStart)
         self.adjustedFirstWeekday = (firstWeekday + 5) % 7 // Adjusting to make Monday = 0, Sunday = 6
-        self.singleDateMode = singleDateMode
+        
+        // Cache today's date for performance
+        self.today = calendar.startOfDay(for: Date())
     }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            
-          
-                if showHeader {
-                    
-                        Text(monthOnly)
-                            .font(.title2)
-                            .fontWeight(.bold)
-                            .foregroundColor(Color("calendarColor"))
-                        Text(yearOnly)
-                            .font(.caption)
-                            .foregroundColor(Color("calendarColor"))
-                            .fontWeight(.bold)
-                    
-                    
+            if showHeader {
+                HStack {
+                    Text(monthOnly)
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .foregroundColor(Color("calendarColor"))
+                    Text(yearOnly)
+                        .font(.caption)
+                        .foregroundColor(Color("calendarColor"))
+                        .fontWeight(.bold)
                 }
-            
+            }
             
             // Days grid
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7), spacing: 0) {
@@ -454,15 +499,13 @@ struct MonthView: View {
                 
                 // Days of the month
                 ForEach(1...daysInMonth, id: \.self) { day in
-                    if let currentDate = calendar.date(from: DateComponents(
-                        year: calendar.component(.year, from: monthStart),
-                        month: calendar.component(.month, from: monthStart),
-                        day: day
-                    )) {
+                    if let currentDate = createDate(day: day) {
                         DayCell(
                             date: currentDate,
+                            day: day,
                             selectedDates: dateSelection.selectedDates,
-                            calendar: calendar
+                            calendar: calendar,
+                            today: today
                         )
                         .aspectRatio(1, contentMode: .fit)
                         .onTapGesture {
@@ -476,8 +519,17 @@ struct MonthView: View {
         }
     }
     
+    // Optimized date creation
+    private func createDate(day: Int) -> Date? {
+        return calendar.date(from: DateComponents(
+            year: calendar.component(.year, from: monthStart),
+            month: calendar.component(.month, from: monthStart),
+            day: day
+        ))
+    }
+    
     private func isPastDate(_ date: Date) -> Bool {
-        calendar.compare(date, to: Date(), toGranularity: .day) == .orderedAscending
+        calendar.compare(date, to: today, toGranularity: .day) == .orderedAscending
     }
     
     private func handleDateSelection(_ date: Date) {
@@ -486,7 +538,7 @@ struct MonthView: View {
             dateSelection.selectedDates = [date]
             dateSelection.selectionState = .firstDateSelected
         }
-        else{
+        else {
             switch dateSelection.selectionState {
             case .none:
                 // First date selected
@@ -517,9 +569,13 @@ struct MonthView: View {
         var dates: [Date] = []
         var currentDate = startDate
         
+        // Pre-compute days between to avoid unnecessary date calculations in the loop
+        let daysBetween = calendar.dateComponents([.day], from: startDate, to: endDate).day ?? 0
+        dates.reserveCapacity(daysBetween + 1)
+        
         while currentDate <= endDate {
             // Skip past dates
-            if calendar.compare(currentDate, to: Date(), toGranularity: .day) != .orderedAscending {
+            if calendar.compare(currentDate, to: today, toGranularity: .day) != .orderedAscending {
                 dates.append(currentDate)
             }
             
@@ -534,13 +590,12 @@ struct MonthView: View {
 // MARK: - DayCell
 struct DayCell: View {
     let date: Date
+    let day: Int  // Pre-computed day value
     let selectedDates: [Date]
     let calendar: Calendar
+    let today: Date
     
-    private var day: Int {
-        calendar.component(.day, from: date)
-    }
-    
+    // Memoized properties to avoid repeated calculations
     private var isEndpoint: Bool {
         isDateEndpoint(date)
     }
@@ -550,7 +605,7 @@ struct DayCell: View {
     }
     
     private var isPastDate: Bool {
-        calendar.compare(date, to: Date(), toGranularity: .day) == .orderedAscending
+        calendar.compare(date, to: today, toGranularity: .day) == .orderedAscending
     }
     
     var body: some View {
@@ -586,8 +641,10 @@ struct DayCell: View {
     }
     
     private func isDateEndpoint(_ date: Date) -> Bool {
-        guard selectedDates.count >= 2 else {
-            return isDateSelected(date)
+        guard !selectedDates.isEmpty else { return false }
+        
+        if selectedDates.count == 1 {
+            return calendar.isDate(date, inSameDayAs: selectedDates[0])
         }
         
         return calendar.isDate(date, inSameDayAs: selectedDates.first!) ||
@@ -608,21 +665,6 @@ struct DayCell: View {
     }
 }
 
-// MARK: - Helper Functions
-func formattedDate(_ date: Date?) -> String {
-    guard let date = date else { return "MMM DD, YYYY" }
-    
-    let formatter = DateFormatter()
-    formatter.dateFormat = "MMM d, yyyy"
-    return formatter.string(from: date)
-}
-
-func formattedTime(_ date: Date) -> String {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "h:mm a"
-    return formatter.string(from: date)
-}
-
 // MARK: - DateAndTime
 struct DateAndTime: View {
     @Binding var showTimePicker: Bool
@@ -639,15 +681,15 @@ struct DateAndTime: View {
                 .font(.caption)
             
             if isFirst {
-                Text(formattedDate(selectedDates.first))
+                Text(CalendarFormatting.formattedDate(selectedDates.first))
                     .font(.headline)
             } else {
-                Text(selectedDates.count > 1 ? formattedDate(selectedDates.last) : "MMM DD, YYYY")
+                Text(selectedDates.count > 1 ? CalendarFormatting.formattedDate(selectedDates.last) : "MMM DD, YYYY")
                     .font(.headline)
             }
             
             if timeSelection {
-                Text(formattedTime(selectedTime))
+                Text(CalendarFormatting.formattedTime(selectedTime))
                     .font(.subheadline)
             }
         }
